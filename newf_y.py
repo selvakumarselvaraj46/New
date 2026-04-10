@@ -1,28 +1,22 @@
-# =============================
-# WORLD FINANCE + AI STREAMLIT
-# =============================
+# =============================================
+# 🌍 WORLD FINANCE AI DASHBOARD (PRO VERSION)
+# Secure + Efficient + AI Enhanced
+# =============================================
 
 import os
+import time
 import streamlit as st
 import pandas as pd
 import numpy as np
-
-# ✅ SAFE IMPORT (prevents crash)
-try:
-    import yfinance as yf
-except:
-    st.error("❌ yfinance not installed. Add it to requirements.txt")
-    st.stop()
-
+import yfinance as yf
 import requests
 from dotenv import load_dotenv
 import plotly.graph_objects as go
-import plotly.express as px
 from plotly.subplots import make_subplots
 from streamlit_autorefresh import st_autorefresh
 
 # -----------------------------
-# LOAD ENV KEYS
+# LOAD ENV
 # -----------------------------
 load_dotenv()
 NEWS_KEY = os.getenv("NEWS_API_KEY")
@@ -30,197 +24,186 @@ NEWS_KEY = os.getenv("NEWS_API_KEY")
 # -----------------------------
 # PAGE CONFIG
 # -----------------------------
-st.set_page_config(
-    page_title="🌍 World Finance AI Dashboard",
-    page_icon="📊",
-    layout="wide"
-)
+st.set_page_config(page_title="🌍 Finance AI PRO", layout="wide")
+
+# -----------------------------
+# RATE LIMIT (SECURITY)
+# -----------------------------
+if "last_call" in st.session_state:
+    if time.time() - st.session_state.last_call < 1:
+        st.warning("Too many requests. Slow down.")
+        st.stop()
+st.session_state.last_call = time.time()
 
 # -----------------------------
 # AUTO REFRESH
 # -----------------------------
-refresh = st.sidebar.slider("Auto Refresh (secs)", 30, 900, 120)
+refresh = st.sidebar.slider("Refresh (sec)", 30, 600, 120)
 st_autorefresh(interval=refresh * 1000)
 
 # -----------------------------
-# MARKET LISTS
+# MARKETS
 # -----------------------------
-US_STOCKS = ["AAPL","MSFT","TSLA","NVDA","GOOGL"]
-INDIAN_STOCKS = ["RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS"]
-CRYPTO = ["BTC-USD","ETH-USD","SOL-USD","DOGE-USD"]
-INDICES = ["^GSPC","^IXIC","^FTSE","^N225"]
-FOREX = ["EURUSD=X","USDINR=X","GBPUSD=X"]
+TICKERS = ["AAPL","MSFT","TSLA","NVDA","RELIANCE.NS","TCS.NS","BTC-USD","ETH-USD"]
 
-# -----------------------------
-# SIDEBAR
-# -----------------------------
-st.sidebar.title("⚙️ Dashboard Settings")
+tickers = st.sidebar.multiselect("Select Assets", TICKERS, default=TICKERS[:3])
 
-market = st.sidebar.radio(
-    "Select Market Segment",
-    ["US Stocks","Indian Stocks","Crypto","Indices","Forex","Mixed"]
-)
-
-if market == "US Stocks":
-    tickers = st.sidebar.multiselect("Select Tickers",US_STOCKS,default=US_STOCKS[:2])
-elif market == "Indian Stocks":
-    tickers = st.sidebar.multiselect("Select Tickers",INDIAN_STOCKS,default=INDIAN_STOCKS[:2])
-elif market == "Crypto":
-    tickers = st.sidebar.multiselect("Select Cryptos",CRYPTO,default=CRYPTO[:2])
-elif market == "Indices":
-    tickers = st.sidebar.multiselect("Select Indices",INDICES,default=INDICES[:2])
-elif market == "Forex":
-    tickers = st.sidebar.multiselect("Select Forex",FOREX,default=FOREX[:2])
-else:
-    tickers = st.sidebar.multiselect(
-        "Mixed",
-        US_STOCKS+INDIAN_STOCKS+CRYPTO+INDICES+FOREX,
-        default=["AAPL","RELIANCE.NS","BTC-USD"]
-    )
-
-custom = st.sidebar.text_input("Add Custom Symbol")
+custom = st.sidebar.text_input("Custom Symbol")
 if custom:
-    tickers.append(custom.upper())
+    if custom.isalnum():
+        tickers.append(custom.upper())
+    else:
+        st.warning("Invalid symbol")
 
-period = st.sidebar.selectbox("Period",["1mo","3mo","6mo","1y","2y","5y"])
+if len(tickers) > 8:
+    st.error("Max 8 tickers allowed")
+    st.stop()
 
-# -----------------------------
-# TECH INDICATORS
-# -----------------------------
-def RSI(data,window=14):
-    delta=data.diff()
-    gain=(delta.where(delta>0,0)).rolling(window).mean()
-    loss=(-delta.where(delta<0,0)).rolling(window).mean()
-    rs=gain/loss
-    return 100-(100/(1+rs))
-
-def MACD(data):
-    exp1=data.ewm(span=12).mean()
-    exp2=data.ewm(span=26).mean()
-    macd=exp1-exp2
-    signal=macd.ewm(span=9).mean()
-    return macd,signal
+period = st.sidebar.selectbox("Period", ["1mo","3mo","6mo","1y"])
 
 # -----------------------------
-# DATA LOADING
+# INDICATORS
 # -----------------------------
-@st.cache_data(ttl=600)
+def RSI(data, window=14):
+    delta = data.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+# -----------------------------
+# DATA LOADER (OPTIMIZED)
+# -----------------------------
+@st.cache_data(ttl=300)
 def load_data(symbol):
-    try:
-        df = yf.download(symbol, period=period, interval="1d", auto_adjust=True, progress=False)
-    except:
-        return pd.DataFrame()
-
+    df = yf.download(symbol, period=period, progress=False)[["Open","High","Low","Close","Volume"]]
     if df.empty:
         return df
 
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-
-    close = df["Close"].astype(float)
-
+    close = df["Close"]
     df["MA20"] = close.rolling(20).mean()
     df["MA50"] = close.rolling(50).mean()
     df["RSI"] = RSI(close)
-
-    macd, signal = MACD(close)
-    df["MACD"] = macd
-    df["Signal"] = signal
-
-    std = close.rolling(20).std()
-    df["Upper"] = df["MA20"] + 2 * std
-    df["Lower"] = df["MA20"] - 2 * std
 
     return df
 
 # -----------------------------
 # LOAD DATA
 # -----------------------------
-data = {}
-for t in tickers:
-    df = load_data(t)
-    if not df.empty:
-        data[t] = df
+data = {t: load_data(t) for t in tickers if not load_data(t).empty}
 
 if not data:
-    st.error("⚠️ No valid data found — check ticker or internet.")
+    st.error("No data")
     st.stop()
 
 # -----------------------------
-# TITLE + KPI
+# TITLE
 # -----------------------------
-st.title("🌍 World Finance AI Dashboard")
+st.title("🌍 Finance AI Dashboard PRO")
 
+# -----------------------------
+# KPIs
+# -----------------------------
 cols = st.columns(len(data))
-for col,(ticker,df) in zip(cols,data.items()):
+for col, (t, df) in zip(cols, data.items()):
     price = df["Close"].iloc[-1]
     prev = df["Close"].iloc[-2]
-    pct = (price-prev)/prev*100
-    col.metric(ticker,f"{price:.2f}",f"{pct:.2f}%")
+    pct = (price - prev) / prev * 100
+    col.metric(t, f"{price:.2f}", f"{pct:.2f}%")
 
 # -----------------------------
 # AI SIGNALS
 # -----------------------------
 st.subheader("🤖 AI Signals")
-
 signals = []
-for ticker,df in data.items():
+for t, df in data.items():
     rsi = df["RSI"].iloc[-1]
-    macd = df["MACD"].iloc[-1]
-    signal = df["Signal"].iloc[-1]
+    price = df["Close"].iloc[-1]
+    ma50 = df["MA50"].iloc[-1]
 
-    if rsi < 30 and macd > signal:
-        rec = "BUY"
-    elif rsi > 70 and macd < signal:
+    if rsi < 30 and price > ma50:
+        rec = "STRONG BUY"
+        risk = "Low"
+    elif rsi > 70:
         rec = "SELL"
+        risk = "High"
     else:
         rec = "HOLD"
+        risk = "Medium"
 
-    signals.append({"Ticker":ticker,"RSI":round(rsi,2),"Recommendation":rec})
+    signals.append({"Ticker": t, "RSI": round(rsi,2), "Signal": rec, "Risk": risk})
 
-st.dataframe(pd.DataFrame(signals),use_container_width=True)
+st.dataframe(pd.DataFrame(signals), use_container_width=True)
 
 # -----------------------------
 # CHART
 # -----------------------------
-focus = st.selectbox("Select Chart",list(data.keys()))
+focus = st.selectbox("Select Chart", list(data.keys()))
 df = data[focus]
 
-fig = make_subplots(rows=4,cols=1,shared_xaxes=True)
+fig = make_subplots(rows=3, cols=1, shared_xaxes=True)
 
-fig.add_trace(go.Candlestick(x=df.index,open=df["Open"],high=df["High"],
-                             low=df["Low"],close=df["Close"]),row=1,col=1)
+fig.add_trace(go.Candlestick(x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"]), row=1, col=1)
+fig.add_trace(go.Scatter(x=df.index, y=df["MA20"], name="MA20"), row=1, col=1)
+fig.add_trace(go.Bar(x=df.index, y=df["Volume"]), row=2, col=1)
+fig.add_trace(go.Scatter(x=df.index, y=df["RSI"], name="RSI"), row=3, col=1)
 
-fig.add_trace(go.Scatter(x=df.index,y=df["MA20"],name="MA20"),row=1,col=1)
-fig.add_trace(go.Scatter(x=df.index,y=df["MA50"],name="MA50"),row=1,col=1)
+fig.update_layout(height=700, xaxis_rangeslider_visible=False)
+st.plotly_chart(fig, use_container_width=True)
 
-fig.add_trace(go.Bar(x=df.index,y=df["Volume"],name="Volume"),row=2,col=1)
-fig.add_trace(go.Scatter(x=df.index,y=df["RSI"],name="RSI"),row=3,col=1)
+# -----------------------------
+# PORTFOLIO
+# -----------------------------
+st.subheader("💼 Portfolio")
+portfolio = []
 
-fig.add_trace(go.Scatter(x=df.index,y=df["MACD"],name="MACD"),row=4,col=1)
-fig.add_trace(go.Scatter(x=df.index,y=df["Signal"],name="Signal"),row=4,col=1)
+for t, df in data.items():
+    qty = st.number_input(f"{t} Qty", value=0, key=t)
+    buy = st.number_input(f"{t} Buy Price", value=0.0, key=t+"b")
+    price = df["Close"].iloc[-1]
 
-fig.update_layout(height=900,xaxis_rangeslider_visible=False)
-st.plotly_chart(fig,use_container_width=True)
+    pnl = (price - buy) * qty
+    portfolio.append({"Ticker": t, "Value": price*qty, "PnL": pnl})
+
+pdf = pd.DataFrame(portfolio)
+st.metric("Total Value", round(pdf["Value"].sum(),2))
+st.metric("Total PnL", round(pdf["PnL"].sum(),2))
+
+# -----------------------------
+# RISK METRICS
+# -----------------------------
+returns = pd.DataFrame({t: data[t]["Close"].pct_change() for t in data})
+
+vol = returns.std() * np.sqrt(252) * 100
+sharpe = returns.mean() / returns.std()
+
+st.write("📊 Volatility %")
+st.dataframe(vol)
+
+st.write("📊 Sharpe Ratio")
+st.dataframe(sharpe)
 
 # -----------------------------
 # NEWS
 # -----------------------------
-st.subheader("📰 Finance News")
+st.subheader("📰 News")
 
 if NEWS_KEY:
     try:
-        r = requests.get(
-            f"https://newsapi.org/v2/top-headlines?category=business&language=en&pageSize=5&apiKey={NEWS_KEY}"
-        ).json()
-
-        for n in r.get("articles",[]):
+        r = requests.get(f"https://newsapi.org/v2/top-headlines?category=business&apiKey={NEWS_KEY}").json()
+        for n in r.get("articles", [])[:5]:
             st.markdown(f"**{n['title']}**")
-            st.markdown(f"[Read more]({n['url']})")
+            st.markdown(n['description'] or "")
             st.markdown("---")
     except:
-        st.warning("News failed to load")
+        st.warning("News error")
 else:
-    st.info("Add NEWS_API_KEY in .env")
+    st.warning("Add NEWS_API_KEY")
 
-st.success("✅ Dashboard Running Successfully")
+# -----------------------------
+# EXPORT
+# -----------------------------
+csv = pdf.to_csv().encode()
+st.download_button("Download Portfolio", csv, "portfolio.csv")
+
+st.success("🚀 PRO Dashboard Ready")
