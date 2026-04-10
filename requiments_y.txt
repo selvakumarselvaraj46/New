@@ -1,8 +1,8 @@
 streamlit
 pandas
 numpy
-yfinance==0.2.40
-plotly
+yfinance
 requests
 python-dotenv
+plotly
 streamlit-autorefresh
